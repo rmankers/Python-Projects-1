@@ -1,0 +1,208 @@
+import gensim
+import nltk
+import re
+import string
+import pandas as pd
+from IPython.display import clear_output
+from sklearn.model_selection import train_test_split, cross_val_score
+import numpy as np
+import text_normalizer as tn
+import matplotlib.pyplot as plt
+import warnings
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.linear_model import SGDClassifier
+warnings.filterwarnings('ignore')
+import random
+
+%matplotlib inline
+
+#Read in joke data
+jokes = pd.read_csv("/Users/maxfairbairn/Documents/MSA/AA502/Fall2/Text Analytics/Text_Mining_Proj_Data/full_train_new.csv")
+
+#Create function to give labels to jokes based on rating (Using 50% percentile of MedRating. >50% = 'funny')
+def get_joke_labels(rating):
+    if rating < 2.34:
+        return "Unfunny"
+    elif rating >= 2.34:
+        return "Funny"
+
+#Apply function to jokes df
+joke_labels = jokes.MedRating.apply(get_joke_labels)
+jokes["FunnyLabels"] = joke_labels
+
+#Split into train and test sets
+random.seed(273)
+JTrain, jtest, RTrain, rtest = train_test_split(jokes, jokes.MedRating, test_size = 0.3)
+
+#Create function to remove punctuation, tokenize, remove stop words, porter stem, create TFIDF vectors, 
+#and create pairwise similarity matrix
+def text_prep(doc):
+
+    # Remove punctuation, then tokenize documents
+    punc = re.compile( '[%s]' % re.escape( string.punctuation ) )
+    term_vec = [ ]
+    
+    for d in doc:
+        d = d.lower()
+        d = punc.sub( '', d )
+        term_vec.append( nltk.word_tokenize( d ) )
+    
+    # Remove stop words from term vectors
+    stop_words = nltk.corpus.stopwords.words( 'english' )
+    
+    for i in range( 0, len( term_vec ) ):
+        term_list = [ ]
+    
+        for term in term_vec[ i ]:
+            if term not in stop_words:
+                term_list.append( term )
+    
+        term_vec[ i ] = term_list
+    
+    # Porter stem remaining terms
+    porter = nltk.stem.porter.PorterStemmer()
+    for i in range( 0, len( term_vec ) ):
+        for j in range( 0, len( term_vec[ i ] ) ):
+            term_vec[ i ][ j ] = porter.stem( term_vec[ i ][ j ] )
+            
+    #  Convert term vectors into gensim dictionary
+    dict = gensim.corpora.Dictionary( term_vec )
+    corp = [ ]
+    for i in range( 0, len( term_vec ) ):
+        corp.append( dict.doc2bow( term_vec[ i ] ) )
+    
+    #  Create TFIDF vectors based on term vectors bag-of-word corpora
+    tfidf_model = gensim.models.TfidfModel( corp )
+    tfidf = [ ]
+    for i in range( 0, len( corp ) ):
+        tfidf.append( tfidf_model[ corp[ i ] ] )
+    
+    # Create pairwise document similarity index
+    n = len( dict )
+    index = gensim.similarities.SparseMatrixSimilarity( tfidf_model[ corp ], num_features = n )
+    
+    #Make term_vec list of strings instead of list of lists
+    s_term_vec = [0]*len(term_vec)
+    for i in range(0, len(term_vec)):
+        s_term_vec[i] = " ".join(term_vec[i])
+    
+    #Make tfidf compatible with function
+    
+    results = {"corp":corp, 
+               "tfidf":tfidf,
+               "term_vec":term_vec,
+              "s_term_vec":s_term_vec}
+    return results
+    
+#Prep train and test sets
+JT_prep = text_prep(JTrain.joke_text)
+jt_prep = text_prep(jtest.joke_text)
+
+#BOW for JTrain & j_test
+cv = CountVectorizer(analyzer = 'word')
+cv_train_features = cv.fit_transform(JT_prep["s_term_vec"])
+cv_test_features = cv.transform(jt_prep["s_term_vec"])
+cv_test = cv.fit(JT_prep["s_term_vec"])
+
+#Create tfidf vectorizer
+tv = TfidfVectorizer(use_idf=True, min_df=0.0, max_df=1.0)
+tv_train_features = tv.fit_transform(JT_prep["s_term_vec"])
+tv_test_features = tv.transform(jt_prep["s_term_vec"])
+tv_test = tv.fit(JT_prep["s_term_vec"])
+
+print('CV model:> Train features shape:', cv_train_features.shape, ' Test features shape', cv_test_features.shape)
+print('TFIDR model:> Train features shape:', tv_train_features.shape, ' Test features shape', tv_test_features.shape)
+  "CV model:> Train features shape: (97, 1280)  Test features shape (42, 1280)"
+  "TFIDR model:> Train features shape: (97, 1280)  Test features shape (42, 1280)"
+  
+#Modeling
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+
+#Create train and test labels
+train_label_names = JTrain["FunnyLabels"]
+test_label_names = jtest["FunnyLabels"]
+
+#Create function which will perform:
+#     -Multinomial Naive Bayes
+#     -Logistic Regression
+#     -Linear SVM
+#     -Stochastic Gradient Descent SVM
+#     -Random Forest
+#     -Gradient Boosting
+#Score each of these models and return a table of those values
+
+def mnb_log_svm_svmsgd_rf__gbc(train_features, test_features, train_label_names, test_label_names):
+    #Fit MNB
+    mnb = MultinomialNB(alpha=1)
+    mnb.fit(train_features, train_label_names)
+    mnb_cv_scores = cross_val_score(mnb, train_features, train_label_names, cv = 5)
+    mnb_cv_mean_score = np.mean(mnb_cv_scores)
+    mnb_test_score = mnb.score(test_features, test_label_names)
+    
+    #Logistic Regression
+    lr = LogisticRegression(penalty='l2', max_iter=100, C=1, random_state=273)
+    lr.fit(train_features, train_label_names)
+    lr_cv_scores = cross_val_score(lr, train_features, train_label_names, cv = 5)
+    lr_cv_mean_score = np.mean(lr_cv_scores)
+    lr_test_score = lr.score(test_features, test_label_names)
+    
+    #SVM
+    svm = LinearSVC(penalty='l2', C=1, random_state=273)
+    svm.fit(train_features, train_label_names)
+    svm_cv_scores = cross_val_score(svm, train_features, train_label_names, cv = 5)
+    svm_cv_mean_score = np.mean(svm_cv_scores)
+    svm_test_score = svm.score(test_features, test_label_names)
+    
+    #SVM (Stochastic Gradient Descent)
+    svm_sgd = SGDClassifier(loss = 'hinge', penalty='l2', max_iter=5, random_state=273)
+    svm_sgd.fit(train_features, train_label_names)
+    svmsgd_cv_scores = cross_val_score(svm_sgd, train_features, train_label_names, cv = 5)
+    svmsgd_cv_mean_score = np.mean(svmsgd_cv_scores)
+    svmsgd_test_score = svm_sgd.score(test_features, test_label_names)
+    
+    #Random Forest
+    rf = RandomForestClassifier(n_estimators = 10, random_state = 273)
+    rf.fit(train_features, train_label_names)
+    rf_cv_scores = cross_val_score(rf, train_features, train_label_names, cv = 5)
+    rf_cv_mean_score = np.mean(rf_cv_scores)
+    rf_test_score = rf.score(test_features, test_label_names)
+    
+    #Boosting
+    gbc = GradientBoostingClassifier(n_estimators=10, random_state=273)
+    gbc.fit(train_features, train_label_names)
+    gbc_cv_scores = cross_val_score(gbc, train_features, train_label_names, cv = 5)
+    gbc_cv_mean_score = np.mean(gbc_cv_scores)
+    gbc_test_score = gbc.score(test_features, test_label_names)
+    
+    cv_table = pd.DataFrame(columns=['TestAccuracy', 'MeanCVAccuracy'], index = ['MNB', 'Logistic Regression',\
+                                                        'SVM', 'SVMGD', 'Random Forest', 'Boosting'])
+    cv_table.TestAccuracy = [mnb_test_score, lr_test_score, svm_test_score, svmsgd_test_score,\
+                         rf_test_score, gbc_test_score]
+    cv_table.MeanCVAccuracy = [mnb_cv_mean_score, lr_cv_mean_score, svm_cv_mean_score, svmsgd_cv_mean_score,\
+                         rf_cv_mean_score, gbc_cv_mean_score]
+    return cv_table.sort_values('TestAccuracy', ascending = False)
+
+#Print accuracy statistics for modeling on the count vectors vs. the tfidf vectors
+print(mnb_log_svm_svmsgd_rf__gbc(cv_train_features, cv_test_features, train_label_names, test_label_names))
+print(mnb_log_svm_svmsgd_rf__gbc(tv_train_features, tv_test_features, train_label_names, test_label_names))
+
+########---Output---########
+                     TestAccuracy
+MNB                      0.761905
+Logistic Regression      0.714286
+SVM                      0.690476
+SVMGD                    0.619048
+Boosting                 0.595238
+Random Forest            0.547619
+                     TestAccuracy
+MNB                      0.761905
+Logistic Regression      0.760032
+SVM                      0.760013
+SVMGD                    0.738095
+Boosting                 0.595238
+Random Forest            0.547619
