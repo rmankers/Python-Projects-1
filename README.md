@@ -8,7 +8,7 @@ each joke.
 2) Website Automation
 This code automates the reservation of conference rooms by booking a room everyday at midnight, a given number of weeks in advance. Given the reservation URL the script will:
 
-  -Open the URL
+  -Open the URL<\br>
   -Input username and password to Shiboleth password protection
   -Request a push from DUO authentication
   -Access the scheduler and book a given room at a given time, a given number of weeks in advance
